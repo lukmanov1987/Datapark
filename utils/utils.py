@@ -45,7 +45,7 @@ def calc_time_diff(df: pd.DataFrame, start_col: str, end_col: str) -> Union[pd.S
         return np.nan
     return (df[end_col] - df[start_col]).total_seconds()
 
-def analyze_metrics(df_control: pd.DataFrame, df_test: pd.DataFrame, column_name: str, alpha=0.05):
+def analyze_metrics(df_control: pd.DataFrame, df_test: pd.DataFrame, column_name: str, alpha=0.05) -> None:
 
     """
     Проводит статистический анализ бинарной метрики для контрольной и тестовой групп.

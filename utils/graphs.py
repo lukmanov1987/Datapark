@@ -1,3 +1,6 @@
+import pandas as pd
+import numpy as np
+
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -5,62 +8,106 @@ import matplotlib.pyplot as plt
 
 from typing import List, Optional, Dict, Union, Tuple
 
-import pandas as pd
+
+
 
 def plot_funnel(data: pd.DataFrame,
                 stages: List[str],                
                 len_data: Optional[int] = None) -> None:
     """
-    Строит воронку на основе DataFrame с данными этапов.
+    Строит классическую воронку на основе DataFrame с данными этапов (от заказа поездки наверху воронки до доставки клиента внизу). В скобках указана конверсия     к orders. Так же в области со стрелкой указана конверсия между этапами 
     
     Parameters:
     -----------
     data : pd.DataFrame
         DataFrame с данными
-    stage_columns : List[str]
-        Список колонок, представляющих этапы (например, ['time_offer', 'time_assign', ...])    
+    stages : List[str]
+        Список названий этапов. Инициируется в main перед запуском функции    
     len_data : Optional[int], default=None
-        Общее количество заказов. Если None, берется количество строк в data """
+        Общее количество заказов. Если None, берется количество строк в data
+    Returns
+    -------
+    None
+        Отображает график воронки и аннотациями ее этапов.
+    """
     
-   
-    # Рассчитываем значения из датасета
+    # Рассчитываем значения
+    if len_data is None:
+        len_data = len(data)
+    
     values = [
         len_data,                                            
         len_data - data['time_offer'].isna().sum(),      
         len_data - data['time_assign'].isna().sum(),     
         len_data - data['time_arrive'].isna().sum(),     
         len_data - data['trip_time'].isna().sum()        
-    ]   
+    ]
     
+    # Переворачиваем для отрисовки сверху вниз
+    stages_reversed = stages[::-1]
+    values_reversed = values[::-1]
     
-    fig = go.Figure(go.Funnel(
-        y = stages,
-        x = values,
-        textposition = "inside",
-        textinfo = "value+percent initial",
-        marker = {"color": px.colors.sequential.Blues_r},
-        orientation = "h",
-        hovertemplate = "<b>%{y}</b><br>" +
-                       "Количество: %{x:,}<br>" +
-                       "Конверсия от предыдущего этапа: %{percentPrevious:.1%}<br>" +
-                       "<extra></extra>",
-        texttemplate = "%{value:,}<br>%{percentInitial:.1%}"
-    ))
+    # Сохраняем первое значение (orders) для расчета процентов
+    first_value = values[0]  # ← ключевое изменение
     
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    fig.update_layout(
-        title = "Воронка заказов такси",
-        title_x = 0.5,  # Простое выравнивание по центру
-        font = {"size": 12},
-        height = 500
-    )
+    max_value = max(values_reversed)
+    n_stages = len(stages_reversed)
     
-    fig.show() 
+    # Рисуем сверху вниз
+    for i, (stage, value) in enumerate(zip(stages_reversed, values_reversed)):
+        # Ширина пропорциональна значению
+        width = value / max_value
+        left = (1 - width) / 2
 
-
-def compare_funnel_groups(control_group: pd.DataFrame, test_group: pd.DataFrame, stages: List[str]) -> None:
+        color_intensity = 0.3 + 0.5 * (i / n_stages)
+        
+        ax.barh(i, width, left=left, height=0.6,
+                color=plt.cm.Blues(color_intensity),
+                edgecolor='white', linewidth=2)
+        
+        # Текст с количеством и процентом от ПЕРВОГО этапа
+        percent_initial = (value / first_value) * 100  # ← используем first_value
+        ax.text(0.5, i, f'{value:,.0f}\n({percent_initial:.1f}%)',
+               ha='center', va='center', fontsize=10, fontweight='bold')
+        
+        # Название этапа слева
+        ax.text(-0.02, i, stage, ha='right', va='center', fontsize=11,
+               transform=ax.get_yaxis_transform())
+        
+        # Процент потерь между этапами
+        if i < n_stages - 1:
+            loss = (1 - values_reversed[i+1] / value) * 100
+            y_pos_arrow = i + 0.5
+            ax.annotate(f'↓ {loss:.1f}%', 
+                   xy=(0.5, y_pos_arrow), 
+                   ha='center', va='center',
+                   fontsize=9, style='italic',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.7))
+    
+    # Настройка осей
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.5, n_stages - 0.5)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Заголовок
+    ax.set_title('Воронка заказов такси\n(от заказа до завершения поездки)', 
+                fontsize=14, fontweight='bold', pad=20)
+    
+    # Убираем рамки
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    
+    plt.tight_layout()
+    plt.show()
+       
+def compare_funnel_groups(control_group: pd.DataFrame, 
+                          test_group: pd.DataFrame, 
+                          stages: List[str]) -> None:
     """
-    Строит воронки конверсии для двух групп.
+    Строит воронки конверсии для двух групп (контрольная и тестовая) в стиле matplotlib.
     
     Parameters
     ----------
@@ -69,13 +116,15 @@ def compare_funnel_groups(control_group: pd.DataFrame, test_group: pd.DataFrame,
     test_group : pd.DataFrame
         DataFrame тестовой группы с колонками этапов
     stages : List[str]
-        Список названий этапов воронки (соответствуют колонкам DataFrame)
+        Список названий этапов воронки
     
     Returns
     -------
     None
-        Отображает интерактивный график с двумя воронками и аннотациями этапов. """
-    # Рассчитываем воронку для группы A
+        Отображает график с двумя воронками и аннотациями этапов между ними.
+    """
+    
+    # Рассчитываем воронку для контрольной группы
     values_control = [
         len(control_group),
         len(control_group) - control_group['time_offer'].isna().sum(),
@@ -84,7 +133,7 @@ def compare_funnel_groups(control_group: pd.DataFrame, test_group: pd.DataFrame,
         len(control_group) - control_group['trip_time'].isna().sum()
     ]
     
-    # Рассчитываем воронку для группы B
+    # Рассчитываем воронку для тестовой группы
     values_test = [
         len(test_group),
         len(test_group) - test_group['time_offer'].isna().sum(),
@@ -93,68 +142,105 @@ def compare_funnel_groups(control_group: pd.DataFrame, test_group: pd.DataFrame,
         len(test_group) - test_group['trip_time'].isna().sum()
     ]
     
-       
-    # Создаем субплоты с двумя воронками
-    fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=('Контрольная группа', 'Тестовая группа'),
-        specs=[[{"type": "funnel"}, {"type": "funnel"}]],
-        horizontal_spacing=0.20  # Увеличиваем расстояние между графиками
-    )
+    # Переворачиваем данные для отрисовки сверху вниз
+    stages_reversed = stages[::-1]
+    values_control_reversed = values_control[::-1]
+    values_test_reversed = values_test[::-1]
     
-    # Добавляем воронку для контрольной группы  без подписей этапов
-    fig.add_trace(go.Funnel(
-        name='Контрольная группа',
-        y=stages,
-        x=values_control,
-        marker=dict(
-            color='#1f77b4',
-            line=dict(color='#1f77b4', width=2)
-        ),
-        textinfo="value+percent initial",    
-        showlegend=False,
-        hoverinfo = 'none'        
-    ), 1, 1)
+    # Сохраняем первое значение (orders) для расчета процентов
+    first_value_control = values_control[0]
+    first_value_test = values_test[0]
     
-    # Добавляем воронку для тестовой группы без подписей этапов
-    fig.add_trace(go.Funnel(
-        name='Те', 
-        y=stages,
-        x=values_test,
-        marker=dict(
-            color='#ff7f0e',
-            line=dict(color='#ff7f0e', width=2)
-        ),
-        textinfo="value+percent initial",    
-        showlegend=False,
-        hoverinfo = 'none'        
-    ), 1, 2)
+    # Создаем фигуру с двумя сабплотами
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    # Добавляем аннотации с названиями этапов между графиками
+    max_value = max(max(values_control_reversed), max(values_test_reversed))
+    n_stages = len(stages_reversed)
+    
+    # Рисуем воронку для контрольной группы (слева) с градиентом
+    for i, (stage, value) in enumerate(zip(stages_reversed, values_control_reversed)):
+        width = value / max_value
+        left = (1 - width) / 2
+        
+        # Градиент: сверху (i=0) темнее, снизу (i=n_stages-1) светлее
+        color_intensity = 0.3 + 0.5 * (i / n_stages)
+        
+        ax1.barh(i, width, left=left, height=0.6,
+                color=plt.cm.Blues(color_intensity),
+                edgecolor='white', linewidth=2)
+        
+        percent_initial = (value / first_value_control) * 100
+        ax1.text(0.5, i, f'{value:,.0f}\n({percent_initial:.1f}%)',
+                ha='center', va='center', fontsize=9, fontweight='bold')
+        
+        # Процент потерь между этапами
+        if i < n_stages - 1:
+            loss = (1 - values_control_reversed[i+1] / value) * 100
+            y_pos_arrow = i + 0.5
+            ax1.annotate(f'↓ {loss:.1f}%', 
+                        xy=(0.5, y_pos_arrow), 
+                        ha='center', va='center',
+                        fontsize=8, style='italic',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.7))
+    
+    # Рисуем воронку для тестовой группы (справа) с градиентом
+    for i, (stage, value) in enumerate(zip(stages_reversed, values_test_reversed)):
+        width = value / max_value
+        left = (1 - width) / 2
+        
+        # Градиент: сверху (i=0) темнее, снизу (i=n_stages-1) светлее
+        color_intensity = 0.3 + 0.5 * (i / n_stages)
+        
+        ax2.barh(i, width, left=left, height=0.6,
+                color=plt.cm.Oranges(color_intensity),
+                edgecolor='white', linewidth=2)
+        
+        percent_initial = (value / first_value_test) * 100
+        ax2.text(0.5, i, f'{value:,.0f}\n({percent_initial:.1f}%)',
+                ha='center', va='center', fontsize=9, fontweight='bold')
+        
+        # Процент потерь между этапами
+        if i < n_stages - 1:
+            loss = (1 - values_test_reversed[i+1] / value) * 100
+            y_pos_arrow = i + 0.5
+            ax2.annotate(f'↓ {loss:.1f}%', 
+                        xy=(0.5, y_pos_arrow), 
+                        ha='center', va='center',
+                        fontsize=8, style='italic',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.7))
+    
+    # Настройка осей для обоих графиков (убираем все шкалы)
+    for ax in [ax1, ax2]:
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-0.5, n_stages - 0.5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    
+    # Добавляем названия этапов между графиками с помощью fig.text
     for i, stage in enumerate(stages):
-        fig.add_annotation(
-            x=0.5, 
-            y=1 - (i + 0.5) / len(stages),  # Равномерное распределение по вертикали
-            xref="paper",
-            yref="paper",
-            text=stage,
-            showarrow=False,
-            font=dict(size=12),
-            xanchor="center"
-        )
+        y_pos = 0.82 - (i * 0.16)
+        
+        fig.text(0.5, y_pos, stage, 
+                ha='center', va='center', 
+                fontsize=11, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                         edgecolor='gray', alpha=0.8))
     
-    fig.update_layout(
-        title_text="Сравнение воронок по тестовым группам",
-        title_x=0.5,
-        height=500,
-        margin=dict(l=80, r=80, t=80, b=80)
-    )
+    # Заголовки для групп
+    ax1.set_title('Контрольная группа', fontsize=12, fontweight='bold', pad=15)
+    ax2.set_title('Тестовая группа', fontsize=12, fontweight='bold', pad=15)
     
-    # Убираем подписи этапов у обеих воронок
-    fig.update_yaxes(showticklabels=False, row=1, col=1)
-    fig.update_yaxes(showticklabels=False, row=1, col=2)
+    # Общий заголовок
+    fig.suptitle('Сравнение воронок по тестовым группам\n(от заказа до завершения поездки)', 
+                fontsize=14, fontweight='bold', y=1.02)
     
-    fig.show()
+    # Используем subplots_adjust вместо tight_layout
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, wspace=0.25)
+    plt.show()
+
 
 
 def daily_distribution_balance(daily_split: pd.DataFrame) -> None:
